@@ -5,6 +5,7 @@
  "creation": "2013-05-21 16:16:39",
  "doctype": "DocType",
  "document_type": "Document",
+ "email_append_to": 1,
  "engine": "InnoDB",
  "field_order": [
   "title",
@@ -192,6 +193,7 @@
   "is_internal_supplier",
   "represents_company",
   "supplier_group",
+  "sender",
   "column_break_147",
   "inter_company_invoice_reference",
   "is_old_subcontracting_flow",
@@ -1134,12 +1136,14 @@
    "label": "Payment Terms"
   },
   {
+   "depends_on": "eval:(!doc.is_paid && !doc.is_return)",
    "fieldname": "payment_terms_template",
    "fieldtype": "Link",
    "label": "Payment Terms Template",
    "options": "Payment Terms Template"
   },
   {
+   "depends_on": "eval:(!doc.is_paid && !doc.is_return)",
    "fieldname": "payment_schedule",
    "fieldtype": "Table",
    "label": "Payment Schedule",
@@ -1621,17 +1625,23 @@
   {
    "default": "1",
    "depends_on": "eval: doc.is_return && doc.return_against",
-   "description": "Debit Note will update it's own outstanding amount, even if \"Return Against\" is specified.",
+   "description": "Debit Note will update it's own outstanding amount, even if 'Return Against' is specified.",
    "fieldname": "update_outstanding_for_self",
    "fieldtype": "Check",
    "label": "Update Outstanding for Self"
+  },
+  {
+   "fieldname": "sender",
+   "fieldtype": "Data",
+   "label": "Sender",
+   "options": "Email"
   }
  ],
  "icon": "fa fa-file-text",
  "idx": 204,
  "is_submittable": 1,
  "links": [],
- "modified": "2024-07-25 19:42:36.931278",
+ "modified": "2025-01-14 11:39:04.564610",
  "modified_by": "Administrator",
  "module": "Accounts",
  "name": "Purchase Invoice",
@@ -1687,6 +1697,7 @@
   }
  ],
  "search_fields": "posting_date, supplier, bill_no, base_grand_total, outstanding_amount",
+ "sender_field": "sender",
  "show_name_in_global_search": 1,
  "sort_field": "creation",
  "sort_order": "DESC",

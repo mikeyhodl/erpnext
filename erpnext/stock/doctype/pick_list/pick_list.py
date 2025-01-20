@@ -50,6 +50,7 @@ class PickList(Document):
 		customer_name: DF.Data | None
 		for_qty: DF.Float
 		group_same_items: DF.Check
+		ignore_pricing_rule: DF.Check
 		locations: DF.Table[PickListItem]
 		material_request: DF.Link | None
 		naming_series: DF.Literal["STO-PICK-.YYYY.-"]
@@ -73,9 +74,8 @@ class PickList(Document):
 
 	def validate(self):
 		self.validate_for_qty()
-		if self.pick_manually and self.get("locations"):
-			self.validate_stock_qty()
-			self.check_serial_no_status()
+		self.validate_stock_qty()
+		self.check_serial_no_status()
 
 	def before_save(self):
 		self.update_status()
@@ -89,14 +89,24 @@ class PickList(Document):
 		from erpnext.stock.doctype.batch.batch import get_batch_qty
 
 		for row in self.get("locations"):
-			if row.batch_no and not row.qty:
+			if not row.picked_qty:
+				continue
+
+			if row.batch_no and row.picked_qty:
 				batch_qty = get_batch_qty(row.batch_no, row.warehouse, row.item_code)
 
-				if row.qty > batch_qty:
+				if row.picked_qty > batch_qty:
 					frappe.throw(
 						_(
-							"At Row #{0}: The picked quantity {1} for the item {2} is greater than available stock {3} for the batch {4} in the warehouse {5}."
-						).format(row.idx, row.item_code, batch_qty, row.batch_no, bold(row.warehouse)),
+							"At Row #{0}: The picked quantity {1} for the item {2} is greater than available stock {3} for the batch {4} in the warehouse {5}. Please restock the item."
+						).format(
+							row.idx,
+							row.picked_qty,
+							row.item_code,
+							batch_qty,
+							row.batch_no,
+							bold(row.warehouse),
+						),
 						title=_("Insufficient Stock"),
 					)
 
@@ -108,11 +118,11 @@ class PickList(Document):
 				"actual_qty",
 			)
 
-			if row.qty > bin_qty:
+			if row.picked_qty > flt(bin_qty):
 				frappe.throw(
 					_(
 						"At Row #{0}: The picked quantity {1} for the item {2} is greater than available stock {3} in the warehouse {4}."
-					).format(row.idx, row.qty, bold(row.item_code), bin_qty, bold(row.warehouse)),
+					).format(row.idx, row.picked_qty, bold(row.item_code), bin_qty, bold(row.warehouse)),
 					title=_("Insufficient Stock"),
 				)
 
@@ -428,7 +438,14 @@ class PickList(Document):
 		locations_replica = self.get("locations")
 
 		# reset
-		self.delete_key("locations")
+		reset_rows = []
+		for row in self.get("locations"):
+			if not row.picked_qty:
+				reset_rows.append(row)
+
+		for row in reset_rows:
+			self.remove(row)
+
 		updated_locations = frappe._dict()
 		for item_doc in items:
 			item_code = item_doc.item_code
@@ -498,6 +515,9 @@ class PickList(Document):
 		# aggregate qty for same item
 		item_map = OrderedDict()
 		for item in locations:
+			if item.picked_qty:
+				continue
+
 			if not item.item_code:
 				frappe.throw(f"Row #{item.idx}: Item Code is Mandatory")
 			if not cint(
@@ -648,6 +668,8 @@ class PickList(Document):
 
 		if self.name:
 			query = query.where(pi_item.parent != self.name)
+
+		query = query.for_update()
 
 		return query.run(as_dict=True)
 
@@ -1144,7 +1166,7 @@ def create_dn_with_so(sales_dict, pick_list):
 	for customer in sales_dict:
 		for so in sales_dict[customer]:
 			delivery_note = None
-			kwargs = {"skip_item_mapping": True}
+			kwargs = {"skip_item_mapping": True, "ignore_pricing_rule": pick_list.ignore_pricing_rule}
 			delivery_note = create_delivery_note_from_sales_order(so, delivery_note, kwargs=kwargs)
 			break
 		if delivery_note:
@@ -1244,6 +1266,7 @@ def create_stock_entry(pick_list):
 	stock_entry = frappe.new_doc("Stock Entry")
 	stock_entry.pick_list = pick_list.get("name")
 	stock_entry.purpose = pick_list.get("purpose")
+	stock_entry.company = pick_list.get("company")
 	stock_entry.set_stock_entry_type()
 
 	if pick_list.get("work_order"):

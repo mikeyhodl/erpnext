@@ -248,7 +248,10 @@ def get_conditions(filters):
 			as_list=True,
 		)
 		if system_generated_cr_dr_journals:
-			filters.update({"voucher_no_not_in": [x[0] for x in system_generated_cr_dr_journals]})
+			vouchers_to_ignore = (filters.get("voucher_no_not_in") or []) + [
+				x[0] for x in system_generated_cr_dr_journals
+			]
+			filters.update({"voucher_no_not_in": vouchers_to_ignore})
 
 	if filters.get("voucher_no_not_in"):
 		conditions.append("voucher_no not in %(voucher_no_not_in)s")
@@ -342,9 +345,17 @@ def get_accounts_with_children(accounts):
 	return frappe.qb.from_(doctype).select(doctype.name).where(Criterion.any(conditions)).run(pluck=True)
 
 
+def set_bill_no(gl_entries):
+	inv_details = get_supplier_invoice_details()
+	for gl in gl_entries:
+		gl["bill_no"] = inv_details.get(gl.get("against_voucher"), "")
+
+
 def get_data_with_opening_closing(filters, account_details, accounting_dimensions, gl_entries):
 	data = []
 	totals_dict = get_totals_dict()
+
+	set_bill_no(gl_entries)
 
 	gle_map = initialize_gle_map(gl_entries, filters, totals_dict)
 
@@ -359,16 +370,21 @@ def get_data_with_opening_closing(filters, account_details, accounting_dimension
 			if acc_dict.entries:
 				# opening
 				data.append({"debit_in_transaction_currency": None, "credit_in_transaction_currency": None})
-				if filters.get("group_by") != "Group by Voucher":
+				if (not filters.get("group_by") and not filters.get("voucher_no")) or (
+					filters.get("group_by") and filters.get("group_by") != "Group by Voucher"
+				):
 					data.append(acc_dict.totals.opening)
 
 				data += acc_dict.entries
 
 				# totals
-				data.append(acc_dict.totals.total)
+				if filters.get("group_by") or not filters.voucher_no:
+					data.append(acc_dict.totals.total)
 
 				# closing
-				if filters.get("group_by") != "Group by Voucher":
+				if (not filters.get("group_by") and not filters.get("voucher_no")) or (
+					filters.get("group_by") and filters.get("group_by") != "Group by Voucher"
+				):
 					data.append(acc_dict.totals.closing)
 
 		data.append({"debit_in_transaction_currency": None, "credit_in_transaction_currency": None})
@@ -536,7 +552,6 @@ def get_account_type_map(company):
 
 def get_result_as_list(data, filters):
 	balance, _balance_in_account_currency = 0, 0
-	inv_details = get_supplier_invoice_details()
 
 	for d in data:
 		if not d.get("posting_date"):
@@ -546,7 +561,6 @@ def get_result_as_list(data, filters):
 		d["balance"] = balance
 
 		d["account_currency"] = filters.account_currency
-		d["bill_no"] = inv_details.get(d.get("against_voucher"), "")
 
 	return data
 
